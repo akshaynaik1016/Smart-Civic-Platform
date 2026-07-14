@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+
+  # ── Backend Python dependencies ──────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["backend", "dependencies"]
+    groups:
+      ai-ml:
+        patterns: ["torch*", "ultralytics", "opencv-*", "imagehash"]
+      web-framework:
+        patterns: ["fastapi", "uvicorn*", "starlette"]
+
+  # ── Dashboard npm dependencies ────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/civic-dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dashboard", "dependencies"]
+    groups:
+      radix-ui:
+        patterns: ["@radix-ui/*"]
+      build-tooling:
+        patterns: ["vite*", "typescript", "eslint*"]
+
+  # ── Flutter / Dart dependencies ──────────────────────────────────────────────
+  - package-ecosystem: "pub"
+    directory: "/civic-platform/flutter_app"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["mobile", "dependencies"]
+
+  # ── Docker base images ────────────────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["deployment", "dependencies"]
+
+  - package-ecosystem: "docker"
+    directory: "/civic-dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["deployment", "dependencies"]
+
+  # ── GitHub Actions versions ──────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["ci-cd", "dependencies"]

@@ -1,0 +1,79 @@
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+gunicorn==22.0.0
+python-multipart==0.0.9
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+psycopg2-binary==2.9.9
+
+# ── Auth & Security ───────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.1
+
+# ── Validation & Serialisation ────────────────────────────────────────────────
+pydantic==2.7.1
+pydantic-settings==2.2.1
+email-validator==2.1.1
+
+# ── Caching ───────────────────────────────────────────────────────────────────
+redis[hiredis]==5.0.4
+hiredis==2.3.2
+
+# ── AWS / Storage ─────────────────────────────────────────────────────────────
+boto3==1.34.101
+botocore==1.34.101
+
+# ── AI / ML ───────────────────────────────────────────────────────────────────
+ultralytics==8.2.18
+torch==2.3.0
+torchvision==0.18.0
+opencv-python-headless==4.9.0.80
+ImageHash==4.3.1
+Pillow==10.3.0
+numpy==1.26.4
+scikit-learn==1.4.2
+
+# ── Firebase ──────────────────────────────────────────────────────────────────
+firebase-admin==6.5.0
+
+# ── HTTP ─────────────────────────────────────────────────────────────────────
+httpx==0.27.0
+aiofiles==23.2.1
+
+# ── Background tasks ─────────────────────────────────────────────────────────
+celery==5.4.0
+celery[redis]==5.4.0
+flower==2.0.1
+
+# ── Monitoring & Logging ──────────────────────────────────────────────────────
+structlog==24.1.0
+sentry-sdk[fastapi]==2.1.1
+prometheus-fastapi-instrumentator==7.0.0
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+slowapi==0.1.9
+limits==3.10.1
+
+# ── GeoSpatial ────────────────────────────────────────────────────────────────
+geopy==2.4.1
+shapely==2.0.4
+
+# ── Reporting ─────────────────────────────────────────────────────────────────
+reportlab==4.2.0
+pypdf==4.2.0
+openpyxl==3.1.3
+jinja2==3.1.4
+weasyprint==62.3
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6
+pytest-cov==5.0.0
+httpx==0.27.0
+factory-boy==3.3.0
+faker==25.0.0

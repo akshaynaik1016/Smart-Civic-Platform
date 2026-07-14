@@ -1,0 +1,210 @@
+name: Backend CI
+
+# ─── Smart Civic Intelligence Platform — FastAPI Backend ──────────────────────
+# Runs on every push/PR touching backend/ — lint, type-check, test against
+# real Postgres+Redis service containers, then upload coverage.
+# Triggered as a required check before merge; does NOT build/push images
+# (that's docker-build.yml, gated on this workflow passing).
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: backend
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+
+  # ── Lint & format check ──────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff + black)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dev dependencies
+        run: pip install ruff==0.4.4 black==24.4.2
+
+      - name: Ruff (lint)
+        run: ruff check app/ tests/ --output-format=github
+
+      - name: Black (format check)
+        run: black --check --diff app/ tests/
+
+  # ── Type checking ────────────────────────────────────────────────────────────
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install mypy==1.10.0
+
+      - name: mypy
+        run: mypy app/ --ignore-missing-imports --no-strict-optional
+        continue-on-error: true   # advisory only until the codebase is fully annotated
+
+  # ── Test suite against real Postgres + Redis ─────────────────────────────────
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4-alpine
+        env:
+          POSTGRES_USER: civic_test
+          POSTGRES_PASSWORD: civic_test
+          POSTGRES_DB: civic_platform_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U civic_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7.2-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://civic_test:civic_test@localhost:5432/civic_platform_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-not-for-production-use-only
+      JWT_SECRET_KEY: ci-test-jwt-secret-key-not-for-production-use-only
+      DOCS_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1-mesa-glx libglib2.0-0
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-cov
+
+      - name: Run database migrations
+        run: |
+          psql "$DATABASE_URL_SYNC" -f database/schema/001_schema.sql || true
+        env:
+          DATABASE_URL_SYNC: postgresql://civic_test:civic_test@localhost:5432/civic_platform_test
+        continue-on-error: true   # schema may already be applied by app init_db()
+
+      - name: Run test suite with coverage
+        run: |
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junitxml=test-results.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Backend test results
+          path: backend/test-results.xml
+          reporter: java-junit
+          fail-on-error: false
+
+  # ── Dependency vulnerability scan ────────────────────────────────────────────
+  security-scan:
+    name: Security scan (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.7.3
+
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt --desc on
+        continue-on-error: true   # advisory — surfaces in logs without blocking merge
+
+  # ── AI module smoke test (no model file required) ───────────────────────────
+  ai-pipeline-test:
+    name: AI pipeline tests (no model weights)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run AI pipeline tests
+        # These tests use hand-built DetectionResult fixtures — no .pt weights
+        # file needed, confirming severity/duplicate/description logic in isolation.
+        run: pytest tests/ai/ -v

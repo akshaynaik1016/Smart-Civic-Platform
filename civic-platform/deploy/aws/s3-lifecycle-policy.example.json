@@ -1,0 +1,50 @@
+{
+  "Rules": [
+    {
+      "ID": "transition-old-complaint-images-to-ia",
+      "Filter": { "Prefix": "complaints/" },
+      "Status": "Enabled",
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 365,
+          "StorageClass": "GLACIER_IR"
+        }
+      ]
+    },
+    {
+      "ID": "transition-old-resolution-images-to-ia",
+      "Filter": { "Prefix": "resolutions/" },
+      "Status": "Enabled",
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 365,
+          "StorageClass": "GLACIER_IR"
+        }
+      ]
+    },
+    {
+      "ID": "expire-incomplete-multipart-uploads",
+      "Filter": {},
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 3
+      }
+    },
+    {
+      "ID": "expire-generated-reports-after-90-days",
+      "Filter": { "Prefix": "reports/" },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 90
+      }
+    }
+  ]
+}

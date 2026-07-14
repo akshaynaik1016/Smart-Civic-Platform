@@ -1,0 +1,38 @@
+# Used by .github/workflows/pr-checks.yml (actions/labeler)
+
+backend:
+  - changed-files:
+      - any-glob-to-any-file: "backend/**"
+
+dashboard:
+  - changed-files:
+      - any-glob-to-any-file: "civic-dashboard/**"
+
+mobile:
+  - changed-files:
+      - any-glob-to-any-file: "civic-platform/flutter_app/**"
+
+ai-module:
+  - changed-files:
+      - any-glob-to-any-file: "backend/app/ai/**"
+
+database:
+  - changed-files:
+      - any-glob-to-any-file: "civic-platform/database/**"
+
+ci-cd:
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/**"
+
+deployment:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docker-compose*.yml"
+          - "**/Dockerfile*"
+          - "deploy/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "docs/**"

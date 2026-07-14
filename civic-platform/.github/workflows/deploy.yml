@@ -1,0 +1,139 @@
+name: Deploy
+
+# ─── Deploys a built image SHA to staging or production via SSH ──────────────
+# Manually triggered (workflow_dispatch) so a human always decides *when* a
+# build goes live, even though the build itself is automatic on every push
+# to main. Production additionally requires a GitHub Environment approval
+# gate configured in repo settings (Settings → Environments → production
+# → Required reviewers).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: "Image SHA tag to deploy (from docker-build.yml summary). Defaults to latest main."
+        required: false
+        default: latest
+
+concurrency:
+  # Never run two deploys to the same environment simultaneously
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # ← GitHub Environment protection rules apply here
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_BACKEND: ${{ github.repository_owner }}/civic-api
+      IMAGE_DASHBOARD: ${{ github.repository_owner }}/civic-dashboard
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve deploy host/secrets for this environment
+        id: target
+        run: |
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            echo "host_secret=PROD_HOST" >> "$GITHUB_OUTPUT"
+            echo "path_secret=PROD_DEPLOY_PATH" >> "$GITHUB_OUTPUT"
+          else
+            echo "host_secret=STAGING_HOST" >> "$GITHUB_OUTPUT"
+            echo "path_secret=STAGING_DEPLOY_PATH" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets[steps.target.outputs.host_secret] }}" >> ~/.ssh/known_hosts
+
+      - name: Record current running SHA (for rollback)
+        id: previous
+        run: |
+          PREV_SHA=$(ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets[steps.target.outputs.host_secret] }}" \
+            "cd ${{ secrets[steps.target.outputs.path_secret] }} && grep -oP 'IMAGE_TAG=\K.*' .env.deploy 2>/dev/null || echo none")
+          echo "previous_sha=${PREV_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Currently running: ${PREV_SHA}"
+
+      - name: Push new image tag to remote .env.deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets[steps.target.outputs.host_secret] }}" \
+            "cd ${{ secrets[steps.target.outputs.path_secret] }} && \
+             echo 'IMAGE_TAG=${{ inputs.image_tag }}' > .env.deploy"
+
+      - name: Pull images and restart stack
+        id: deploy_step
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets[steps.target.outputs.host_secret] }}" '
+            set -euo pipefail
+            cd "${{ secrets[steps.target.outputs.path_secret] }}"
+            source .env.deploy
+
+            export GHCR_BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_BACKEND }}:${IMAGE_TAG}"
+            export GHCR_DASHBOARD_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_DASHBOARD }}:${IMAGE_TAG}"
+
+            echo "$GHCR_PAT" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker pull "$GHCR_BACKEND_IMAGE"
+            docker pull "$GHCR_DASHBOARD_IMAGE"
+
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+              --profile production up -d --no-build
+
+            docker compose exec -T api alembic upgrade head
+          '
+        env:
+          GHCR_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for health check
+        id: health_check
+        run: |
+          HOST="${{ secrets[steps.target.outputs.host_secret] }}"
+          echo "Polling https://${HOST}/health ..."
+          for i in $(seq 1 15); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${HOST}/health" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Healthy after ${i} attempts."
+              exit 0
+            fi
+            echo "Attempt ${i}/15: HTTP ${STATUS} — retrying in 10s"
+            sleep 10
+          done
+          echo "::error::Service did not become healthy within 150 seconds."
+          exit 1
+
+      # ── Automatic rollback on health-check failure ──────────────────────────
+      - name: Rollback to previous image on failure
+        if: failure() && steps.previous.outputs.previous_sha != 'none'
+        run: |
+          echo "::warning::Deploy failed health check — rolling back to ${{ steps.previous.outputs.previous_sha }}"
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets[steps.target.outputs.host_secret] }}" '
+            set -euo pipefail
+            cd "${{ secrets[steps.target.outputs.path_secret] }}"
+            echo "IMAGE_TAG=${{ steps.previous.outputs.previous_sha }}" > .env.deploy
+            source .env.deploy
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+              --profile production up -d --no-build
+          '
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "### Deployment to ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Requested tag: \`${{ inputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Previous tag: \`${{ steps.previous.outputs.previous_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Result: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

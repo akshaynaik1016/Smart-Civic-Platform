@@ -1,0 +1,235 @@
+version: "3.9"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Smart Civic Intelligence Platform — Full Stack Deployment
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Layers:
+#   edge        — Nginx reverse proxy / TLS termination (production entrypoint)
+#   dashboard   — React admin/officer web dashboard (static, served by Nginx)
+#   api         — FastAPI backend (uvicorn, 4 workers)
+#   worker      — Celery worker (notifications, AI processing, reports)
+#   beat        — Celery beat scheduler (SLA checks, digests, cleanup)
+#   flower      — Celery monitoring dashboard
+#   postgres    — PostGIS-enabled primary database
+#   redis       — Cache, session store, Celery broker, rate limiting
+#   pgadmin     — DB admin UI (dev profile only)
+#
+# Usage:
+#   Local dev:    docker compose --profile dev up
+#   Production:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+x-backend-common: &backend-common
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  env_file: ./backend/.env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - civic-net
+  restart: unless-stopped
+  volumes:
+    - ./models:/app/models:ro
+    - media_uploads:/tmp/civic_uploads
+
+services:
+
+  # ── Edge reverse proxy (TLS termination, routing) ───────────────────────────
+  edge:
+    image: nginx:1.27-alpine
+    container_name: civic_edge
+    profiles: ["production"]
+    depends_on:
+      - api
+      - dashboard
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/edge.conf:/etc/nginx/conf.d/edge.conf:ro
+      - ./deploy/nginx/proxy_params.conf:/etc/nginx/proxy_params.conf:ro
+      - ./deploy/certbot/conf:/etc/nginx/ssl:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+    networks:
+      - civic-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── React Dashboard (officer/admin web UI) ──────────────────────────────────
+  dashboard:
+    build:
+      context: ./civic-dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${DASHBOARD_API_URL:-/api/v1}
+    container_name: civic_dashboard
+    ports:
+      - "${DASHBOARD_PORT:-3000}:80"
+    networks:
+      - civic-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
+  api:
+    <<: *backend-common
+    container_name: civic_api
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --workers ${API_WORKERS:-4}
+        --log-level info
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Celery worker ────────────────────────────────────────────────────────────
+  worker:
+    <<: *backend-common
+    container_name: civic_worker
+    command: >
+      celery -A app.workers.notification_worker.celery_app worker
+        --loglevel=info
+        --concurrency=${WORKER_CONCURRENCY:-4}
+        --queues=notifications,ai,reports,default
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.notification_worker.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Celery beat scheduler ────────────────────────────────────────────────────
+  beat:
+    <<: *backend-common
+    container_name: civic_beat
+    command: >
+      celery -A app.workers.notification_worker.celery_app beat
+        --loglevel=info
+        --scheduler=celery.beat.PersistentScheduler
+    volumes:
+      - ./models:/app/models:ro
+      - celery_beat_data:/app/celerybeat-schedule
+
+  # ── Flower (Celery monitoring) ───────────────────────────────────────────────
+  flower:
+    <<: *backend-common
+    container_name: civic_flower
+    profiles: ["dev", "monitoring"]
+    command: >
+      celery -A app.workers.notification_worker.celery_app flower
+        --port=5555
+        --basic-auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-changeme}
+    ports:
+      - "5555:5555"
+    depends_on:
+      - worker
+
+  # ── PostgreSQL + PostGIS ──────────────────────────────────────────────────────
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: civic_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-civic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-civic}
+      POSTGRES_DB:       ${POSTGRES_DB:-civic_platform}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./civic-platform/database/schema/001_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./civic-platform/database/indexes/002_indexes.sql:/docker-entrypoint-initdb.d/02_indexes.sql:ro
+      - ./civic-platform/database/schema/003_triggers.sql:/docker-entrypoint-initdb.d/03_triggers.sql:ro
+      - ./deploy/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - civic-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-civic} -d ${POSTGRES_DB:-civic_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: civic_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+        --requirepass ${REDIS_PASSWORD:-changeme}
+        --maxmemory ${REDIS_MAXMEMORY:-512mb}
+        --maxmemory-policy allkeys-lru
+        --save 60 1
+        --loglevel notice
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - civic-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── pgAdmin (dev only) ───────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: civic_pgadmin
+    profiles: ["dev"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL:-admin@civic.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - civic-net
+
+  # ── Certbot (production TLS renewal) ────────────────────────────────────────
+  certbot:
+    image: certbot/certbot
+    container_name: civic_certbot
+    profiles: ["production"]
+    volumes:
+      - ./deploy/certbot/conf:/etc/letsencrypt
+      - ./deploy/certbot/www:/var/www/certbot
+    entrypoint: >
+      sh -c "trap exit TERM;
+             while :; do
+               certbot renew --webroot -w /var/www/certbot;
+               sleep 12h;
+             done"
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_uploads:
+  celery_beat_data:
+
+networks:
+  civic-net:
+    driver: bridge

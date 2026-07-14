@@ -1,0 +1,56 @@
+version: "3.9"
+
+# Local development overlay — this is the default if you just run
+# `docker compose up` since Docker Compose auto-loads docker-compose.override.yml.
+#
+#   docker compose --profile dev up
+#
+# Differences from base:
+#   • API runs with --reload and a single worker for fast iteration
+#   • Source code is bind-mounted so edits reflect without a rebuild
+#   • Dashboard runs Vite's dev server instead of the built static bundle
+#   • All ports exposed directly on localhost — no edge proxy needed
+
+services:
+
+  api:
+    build:
+      target: runtime
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --reload
+        --log-level debug
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+      RELOAD: "true"
+      DOCS_ENABLED: "true"
+    volumes:
+      - ./backend/app:/app/app
+      - ./models:/app/models:ro
+      - media_uploads:/tmp/civic_uploads
+
+  dashboard:
+    build:
+      context: ./civic-dashboard
+      dockerfile: Dockerfile.dev
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    volumes:
+      - ./civic-dashboard/src:/app/src
+      - ./civic-dashboard/index.html:/app/index.html
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+
+  worker:
+    command: >
+      celery -A app.workers.notification_worker.celery_app worker
+        --loglevel=debug
+        --concurrency=2
+        --queues=notifications,ai,reports,default
+    volumes:
+      - ./backend/app:/app/app
+      - ./models:/app/models:ro

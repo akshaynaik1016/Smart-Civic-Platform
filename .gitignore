@@ -1,0 +1,22 @@
+# Flutter
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Xcode
+DerivedData/
+
+# Secrets
+.env

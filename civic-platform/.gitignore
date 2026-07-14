@@ -1,0 +1,85 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Smart Civic Intelligence Platform — Root .gitignore
+# ══════════════════════════════════════════════════════════════════════════════
+# This file exists specifically so that a real .env, keystore, or service
+# account JSON cannot be accidentally committed. If you ever need to commit
+# a *template*, name it *.example and it will be allowed through explicitly.
+
+# ── Environment files (NEVER commit real secrets) ─────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.*.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+deploy/.env.deploy
+
+# ── Credentials & keys ──────────────────────────────────────────────────────────
+*.pem
+*.key
+*.jks
+*.keystore
+*.p12
+*.cer
+firebase-service-account*.json
+google-credentials*.json
+android/key.properties
+android/app/*.jks
+backend/secrets/
+!backend/secrets/.gitkeep
+
+# ── AI model weights (large binaries, not source) ───────────────────────────────
+models/*.pt
+models/*.onnx
+!models/.gitkeep
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+.venv/
+venv/
+
+# ── Node / React dashboard ───────────────────────────────────────────────────
+node_modules/
+civic-dashboard/dist/
+civic-dashboard/.vite/
+*.log
+npm-debug.log*
+
+# ── Flutter / Dart ────────────────────────────────────────────────────────────
+**/build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+*.iml
+civic-platform/flutter_app/android/.gradle/
+civic-platform/flutter_app/ios/Pods/
+
+# ── Docker / deployment ───────────────────────────────────────────────────────
+deploy/certbot/conf/*
+deploy/certbot/www/*
+!deploy/certbot/conf/.gitkeep
+!deploy/certbot/www/.gitkeep
+backups/
+
+# ── Uploads / local storage fallback ─────────────────────────────────────────
+media_uploads/
+/tmp/civic_uploads/
+
+# ── IDE / OS ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

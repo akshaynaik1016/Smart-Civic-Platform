@@ -1,0 +1,72 @@
+version: "3.9"
+
+# Production overlay — apply alongside the base compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile production up -d
+#
+# Differences from base/dev:
+#   • No directly exposed ports for api/postgres/redis — only `edge` is public
+#   • Resource limits set per service
+#   • DEBUG/RELOAD disabled, structured JSON logging
+#   • Replica counts for horizontal scaling (requires `docker compose up --scale`)
+
+services:
+
+  api:
+    ports: []          # only reachable via the edge proxy on the internal network
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      RELOAD: "false"
+      DOCS_ENABLED: "false"     # disable public Swagger UI in production
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  worker:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  beat:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  dashboard:
+    ports: []           # only reachable via the edge proxy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  postgres:
+    ports: []           # database never exposed publicly in production
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
+
+  redis:
+    ports: []
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
